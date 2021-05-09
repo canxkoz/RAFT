@@ -21,6 +21,27 @@ except:
             pass
 
 
+class FeatureExtractor(nn.Module):
+  def __init__(self):
+      super(FeatureExtractor, self).__init__()
+      import torchvision
+      original_model = torchvision.models.densenet169(pretrained=True)
+      self.features = nn.Sequential(
+          *list(original_model.features.children())[:7]
+      )
+  def forward(self, x):
+      # if input is list, combine batch dimension
+      is_list = isinstance(x, tuple) or isinstance(x, list)
+      if is_list:
+        batch_dim = x[0].shape[0]
+        x = torch.cat(x, dim=0)
+
+      x = self.features(x)
+
+      if is_list:
+        x = torch.split(x, [batch_dim, batch_dim], dim=0)
+      return x
+
 class RAFT(nn.Module):
     def __init__(self, args):
         super(RAFT, self).__init__()
@@ -46,12 +67,13 @@ class RAFT(nn.Module):
 
         # feature network, context network, and update block
         if args.small:
-            self.fnet = SmallEncoder(output_dim=128, norm_fn='instance', dropout=args.dropout)        
+            self.fnet = SmallEncoder(output_dim=128, norm_fn='instance', dropout=args.dropout)     
             self.cnet = SmallEncoder(output_dim=hdim+cdim, norm_fn='none', dropout=args.dropout)
             self.update_block = SmallUpdateBlock(self.args, hidden_dim=hdim)
 
         else:
-            self.fnet = BasicEncoder(output_dim=256, norm_fn='instance', dropout=args.dropout)        
+            # self.fnet = BasicEncoder(output_dim=256, norm_fn='instance', dropout=args.dropout)    
+            self.fnet = FeatureExtractor()      
             self.cnet = BasicEncoder(output_dim=hdim+cdim, norm_fn='batch', dropout=args.dropout)
             self.update_block = BasicUpdateBlock(self.args, hidden_dim=hdim)
 
