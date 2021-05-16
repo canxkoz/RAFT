@@ -59,6 +59,70 @@ class SepConvGRU(nn.Module):
 
         return h
 
+class myAttn(nn.Module):
+    def __init__(self, hidden_dim=128, input_dim=192+128,units=16):
+        super(myAttn,self).__init__()
+        self.attn_h = nn.Linear(hidden_dim, units)
+        self.attn_x = nn.Linear(2*hidden_dim, units)
+        self.attn_score=nn.Linear(units,1)
+            
+    def forward(self,h,x):
+        N, S_h, H, W = h.shape
+        h=h.view(N,S_h,H*W) # N, 128, 2852
+        
+        N, S_x, H, W = x.shape
+        x=x.view(N,S_x,H*W) # N, 256, 2852
+        
+       
+        h=h.permute(0, 2, 1) # N, 2852, 128
+        x=x.permute(0, 2, 1) # N, 2852, 256
+        z=torch.tanh(self.attn_h(h)+self.attn_x(x))
+        scores=F.softmax(self.attn_score(z),dim=1)
+        scores=scores.view(N,-1,1)
+        
+        context_vector=(scores*h).permute(0,2,1)
+        return context_vector.view(N,S_h,H,W),scores.view(N,1,H,W)
+
+
+
+class AttnDecoderRNN(nn.Module):
+    def __init__(self, hidden_size, output_size, dropout_p=0.1, max_length=10):
+        super(AttnDecoderRNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.dropout_p = dropout_p
+        self.max_length = max_length
+
+        self.embedding = nn.Embedding(self.output_size, self.hidden_size)
+        self.attn = nn.Linear(self.hidden_size * 2, self.max_length)
+        self.attn_combine = nn.Linear(self.hidden_size * 2, self.hidden_size)
+        self.dropout = nn.Dropout(self.dropout_p)
+        self.gru = nn.GRU(self.hidden_size, self.hidden_size)
+        self.out = nn.Linear(self.hidden_size, self.output_size)
+
+    def forward(self, input, hidden, encoder_outputs):
+        embedded = self.embedding(input).view(1, 1, -1)
+        embedded = self.dropout(embedded)
+
+        attn_weights = F.softmax(
+            self.attn(torch.cat((embedded[0], hidden[0]), 1)), dim=1)
+        attn_applied = torch.bmm(attn_weights.unsqueeze(0),
+                                 encoder_outputs.unsqueeze(0))
+
+        output = torch.cat((embedded[0], attn_applied[0]), 1)
+        output = self.attn_combine(output).unsqueeze(0)
+
+        output = F.relu(output)
+        output, hidden = self.gru(output, hidden)
+
+        output = F.log_softmax(self.out(output[0]), dim=1)
+        return output, hidden, attn_weights
+
+    def initHidden(self):
+        return torch.zeros(1, 1, self.hidden_size, device=device)
+
+
+
 class SmallMotionEncoder(nn.Module):
     def __init__(self, args):
         super(SmallMotionEncoder, self).__init__()
@@ -116,9 +180,10 @@ class BasicUpdateBlock(nn.Module):
         super(BasicUpdateBlock, self).__init__()
         self.args = args
         self.encoder = BasicMotionEncoder(args)
-        self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=128+hidden_dim)
+        self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=256+hidden_dim)
+        self.attn = myAttn(hidden_dim=hidden_dim, input_dim=128+hidden_dim)
         self.flow_head = FlowHead(hidden_dim, hidden_dim=256)
-
+        
         self.mask = nn.Sequential(
             nn.Conv2d(128, 256, 3, padding=1),
             nn.ReLU(inplace=True),
@@ -126,8 +191,10 @@ class BasicUpdateBlock(nn.Module):
 
     def forward(self, net, inp, corr, flow, upsample=True):
         motion_features = self.encoder(flow, corr)
-        inp = torch.cat([inp, motion_features], dim=1)
 
+        inp = torch.cat([inp, motion_features], dim=1)
+        context_vector,scores = self.attn(net, inp)
+        inp = torch.cat([inp, context_vector], dim=1)
         net = self.gru(net, inp)
         delta_flow = self.flow_head(net)
 
