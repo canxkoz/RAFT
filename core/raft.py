@@ -25,7 +25,7 @@ class FeatureExtractor(nn.Module):
   def __init__(self):
       super(FeatureExtractor, self).__init__()
       import torchvision
-      original_model = torchvision.models.densenet169(pretrained=True)
+      original_model = torchvision.models.densenet201(pretrained=True)
       self.features = nn.Sequential(
           *list(original_model.features.children())[:7]
       )
