@@ -1,4 +1,6 @@
 # RAFT
+To see various changes I have made in this fork please see the publicly available branches I have created with names "attention_densenet", "attention_experiment", "baseline" , "densenet201" as well as the "master" branch.
+
 This repository contains the source code for our paper:
 
 [RAFT: Recurrent All Pairs Field Transforms for Optical Flow](https://arxiv.org/pdf/2003.12039.pdf)<br/>
